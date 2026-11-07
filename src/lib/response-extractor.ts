@@ -1,116 +1,58 @@
-type ResponseStatus = "success" | "tool_call" | "wait" | "failure";
-
-type ExtractedChunk = {
-  status: ResponseStatus | undefined;
-  delta: string;
-};
-
-// Extract the string after "res": from the small JSON object requested in ai.ts.
+/** Incrementally decode answer text. Complete-response validation belongs to the agent loop. */
 export function createResponseExtractor() {
   let buffer = "";
-  let status: ResponseStatus | undefined;
-  let resStarted = false;
-  let resFinished = false;
+  let started = false;
+  let finished = false;
   let pendingSurrogate = "";
 
   return {
-    push(chunk: string): ExtractedChunk {
-      if (resFinished) {
-        return { status, delta: "" };
-      }
-
+    push(chunk: string): string {
+      if (finished) return "";
       buffer += chunk;
-
-      // Wait until the status has been streamed.
-      if (!status) {
-        const statusMatch =
-          /"status"\s*:\s*"(success|tool_call|wait|failure)"/.exec(buffer);
-
-        if (!statusMatch) {
-          return { status: undefined, delta: "" };
+      if (!started) {
+        // Only stream the requested top-level key order, never nested tool arguments.
+        // Valid replies with another key order are displayed after full validation.
+        const header = /^\s*(?:```(?:json)?\s*)?\{\s*"status"\s*:\s*"(success|failure|tool_call)"\s*,\s*"res"\s*:\s*/.exec(buffer);
+        if (!header) return "";
+        if (header[1] === "tool_call") {
+          finished = true;
+          buffer = "";
+          return "";
         }
-
-        status = statusMatch[1] as ResponseStatus;
-      }
-
-      // Tool calls stay out of the chat. Success and failure text is shown.
-      if (status !== "success" && status !== "failure") {
-        return { status, delta: "" };
-      }
-
-      // Find the beginning of the res string.
-      // everything after this part can be abstracted to this:
-      // - if streaming hasnt started, look for "res" value
-      // - if streaming has started, just parse text and return it
-      if (!resStarted) {
-        const resMatch = /"res"\s*:\s*"/.exec(buffer);
-
-        if (!resMatch) {
-          return { status, delta: "" };
-        }
-
-        buffer = buffer.slice(resMatch.index + resMatch[0].length);
-        resStarted = true;
+        const rest = buffer.slice(header[0].length);
+        if (!rest.length) return "";
+        if (rest[0] !== '"') throw new Error("Expected an answer string.");
+        buffer = rest.slice(1);
+        started = true;
       }
 
       let delta = pendingSurrogate;
       pendingSurrogate = "";
-
-      while (buffer.length > 0) {
-        // An unescaped quote ends the res string.
-        if (buffer[0] === '"') {
-          resFinished = true;
-          buffer = "";
+      let consumed = 0;
+      while (consumed < buffer.length) {
+        const char = buffer[consumed];
+        if (char === '"') {
+          finished = true;
+          consumed++;
           break;
         }
-
-        // Decode JSON escape sequences.
-        if (buffer[0] === "\\") {
-          if (buffer.length < 2) break;
-
-          const escapeLength = buffer[1] === "u" ? 6 : 2;
-
-          // The escape sequence may be split across streamed chunks.
-          if (buffer.length < escapeLength) break;
-
-          delta += JSON.parse(
-            `"${buffer.slice(0, escapeLength)}"`
-          );
-
-          buffer = buffer.slice(escapeLength);
-          continue;
+        if (char === "\\") {
+          const length = buffer[consumed + 1] === "u" ? 6 : 2;
+          if (buffer.length - consumed < length) break;
+          delta += JSON.parse(`"${buffer.slice(consumed, consumed + length)}"`);
+          consumed += length;
+        } else {
+          if (char.charCodeAt(0) < 32) throw new Error("Unescaped control character in answer.");
+          delta += char;
+          consumed++;
         }
-
-        delta += buffer[0];
-        buffer = buffer.slice(1);
       }
-
-      // Avoid sending half of an emoji to TextEncoder.
-      if (
-        !resFinished &&
-        /[\uD800-\uDBFF]$/.test(delta)
-      ) {
+      buffer = finished ? "" : buffer.slice(consumed);
+      if (!finished && /[\uD800-\uDBFF]$/.test(delta)) {
         pendingSurrogate = delta.slice(-1);
         delta = delta.slice(0, -1);
       }
-
-      return { status, delta };
-    },
-
-    finish(): ResponseStatus {
-      if (!status) {
-        throw new Error("AI response did not include a valid status.");
-      }
-
-      if ((status === "success" || status === "failure") && !resFinished) {
-        throw new Error("AI returned an incomplete res string.");
-      }
-
-      return status;
-    },
-
-    getStatus(): ResponseStatus | undefined {
-      return status;
+      return delta;
     },
   };
 }

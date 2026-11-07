@@ -1,7 +1,7 @@
 "use client";
 
 import { DefaultToolbar, ToolbarItem, TldrawUiMenuItem, useEditor } from 'tldraw';
-import { createBoardShape } from '@/lib/whiteboard/create-board-shape';
+import { createPolygon } from '@/lib/whiteboard/create-polygon';
 
 // Keep the native tools and overflow behavior, with polygon beside the arrow tool.
 const beforePolygon = ['select', 'hand', 'draw', 'eraser', 'arrow'];
@@ -14,7 +14,7 @@ export function BoardToolbar() {
   return <DefaultToolbar>
     {beforePolygon.map(tool => <ToolbarItem key={tool} tool={tool} />)}
     <TldrawUiMenuItem id="insert-polygon" label="Polygon" icon="geo-pentagon"
-      onSelect={() => createBoardShape(editor, 'polygon')} />
+      onSelect={() => createPolygon(editor)} />
     {afterPolygon.map(tool => <ToolbarItem key={tool} tool={tool} />)}
   </DefaultToolbar>;
 }

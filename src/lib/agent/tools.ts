@@ -1,51 +1,30 @@
 import "server-only";
-
 import { z } from "zod";
-import { CreateShapeSchema, DeleteObjectSchema, NoArgumentsSchema, TextboxSchema, UpdateObjectSchema } from "../whiteboard/schemas";
-import { createShape, createTextbox, deleteObject, getCoordinates, listObjects, updateObject } from "../whiteboard/services";
+import { CreateShapeSchema, DeleteObjectSchema, NoArgumentsSchema, TextboxSchema, UpdateObjectSchema } from "../whiteboard/schemas.ts";
+import { createShape, createTextbox, deleteObject, listObjects, updateObject } from "../whiteboard/services.ts";
 
-export interface Tool {
-    tool_name: string;
-    tool_description: string;
-    arguments: Record<string, any>;
-    inputSchema: z.ZodType<any>;
-    execute: (args?: any) => any;
+function defineTool<T extends z.ZodType>(
+  name: string,
+  description: string,
+  schema: T,
+  execute: (input: z.output<T>) => unknown,
+) {
+  return {
+    tool_name: name,
+    tool_description: description,
+    arguments: z.toJSONSchema(schema),
+    execute(input: unknown) {
+      const parsed = schema.safeParse(input);
+      if (!parsed.success) return { success: false, message: "Invalid tool arguments", error: parsed.error.issues };
+      return execute(parsed.data);
+    },
+  };
 }
 
-export const toolDescriptions: Tool[] = [
-    {
-        tool_name: "get_objects",
-        tool_description: "returns a list of all objects currently on the whiteboard.",
-        arguments: z.toJSONSchema(NoArgumentsSchema),
-        inputSchema: NoArgumentsSchema,
-        execute: listObjects,
-    },
-    {
-        tool_name: "add_shape",
-        tool_description: "adds either a rect, circle, polygon, or arrow to the canvas.",
-        arguments: z.toJSONSchema(CreateShapeSchema),
-        inputSchema: CreateShapeSchema,
-        execute: createShape
-    },
-    {
-        tool_name: "add_textbox",
-        tool_description: "adds a textbox to the canvas.",
-        arguments: z.toJSONSchema(TextboxSchema),
-        inputSchema: TextboxSchema,
-        execute: createTextbox
-    },
-    {
-        tool_name: "delete_object",
-        tool_description: "delete an object with a given id",
-        arguments: z.toJSONSchema(DeleteObjectSchema),
-        inputSchema: DeleteObjectSchema,
-        execute: deleteObject
-    },
-    {
-        tool_name: "update_object",
-        tool_description: "update an object with a given id. labelX and labelY move an existing label: 0.5 is the middle, 0 is the left or bottom edge, and 1 is the right or top edge.",
-        arguments: z.toJSONSchema(UpdateObjectSchema),
-        inputSchema: UpdateObjectSchema,
-        execute: updateObject
-    },
-]
+export const toolDescriptions = [
+  defineTool("get_objects", "Returns all supported objects on the whiteboard.", NoArgumentsSchema, listObjects),
+  defineTool("add_shape", "Adds a rect, circle, polygon, or arrow to the canvas.", CreateShapeSchema, createShape),
+  defineTool("add_textbox", "Adds a textbox to the canvas.", TextboxSchema, createTextbox),
+  defineTool("delete_object", "Deletes an object with the given id.", DeleteObjectSchema, deleteObject),
+  defineTool("update_object", "Updates an object with the given id. labelX and labelY position a label relative to its bounds: 0 is left/bottom, 0.5 is middle, 1 is right/top; values outside 0..1 are allowed.", UpdateObjectSchema, updateObject),
+];

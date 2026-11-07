@@ -10,8 +10,8 @@ const geist = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "Whiteboard",
-  description: "A simple whiteboard canvas",
+  title: "Whiteboard AI",
+  description: "An interactive whiteboard with an AI assistant for drawing, diagrams, and explanations.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

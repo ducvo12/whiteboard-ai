@@ -117,4 +117,12 @@ export const UpdateObjectSchema = z.object({
     ]),
 });
 
-export type UpdateObjectSchemaType = z.infer<typeof UpdateObjectSchema>
+export type UpdateObjectSchemaType = z.infer<typeof UpdateObjectSchema>;
+
+export const ObjectPatchSchemas = {
+    rect: RectUpdateSchema,
+    circle: CircleUpdateSchema,
+    polygon: PolygonUpdateSchema,
+    arrow: ArrowUpdateSchema,
+    textbox: TextboxUpdateSchema,
+};

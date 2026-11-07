@@ -1,5 +1,5 @@
 import { objectBounds } from "./geometry.ts";
-import type { StoredObjectSchemaType } from "./schemas";
+import type { BoardObjectSchemaType } from "./schemas";
 
 export const LABEL_FONT = 14;
 export const LABEL_COLOR = "#1f241c";
@@ -22,10 +22,8 @@ export function labelMetrics(text: string, fontSize = LABEL_FONT) {
   return { w: Math.max(measureWidth(text, fontSize), 1), h: fontSize };
 }
 
-// labelX/labelY place the label center on the object box.
-// 0 is the left or bottom edge, 1 is the right or top edge, 0.5 is the middle.
-// The center may sit slightly outside 0..1 so the text can hang off an edge.
-export function labelPlacement(obj: StoredObjectSchemaType, text: string) {
+/** Preserve the old clamped position only when migrating legacy polygon labels. */
+export function labelPlacement(obj: BoardObjectSchemaType, text: string) {
   const bounds = objectBounds(obj);
   const spanX = Math.max(bounds.maxX - bounds.minX, 1);
   const spanY = Math.max(bounds.maxY - bounds.minY, 1);
@@ -42,5 +40,22 @@ export function labelPlacement(obj: StoredObjectSchemaType, text: string) {
     h: size.h,
     labelX: (cx - bounds.minX) / spanX,
     labelY: (cy - bounds.minY) / spanY,
+  };
+}
+
+/** Current labels may sit anywhere in the parent's local coordinate system. */
+export function labelLayout(object: BoardObjectSchemaType, text: string) {
+  const bounds = objectBounds(object);
+  const fontSize = object.labelFontSize ?? LABEL_FONT;
+  const lines = text.split("\n");
+  const lineHeight = fontSize * 1.2;
+  return {
+    cx: bounds.minX + (object.labelX ?? 0.5) * (bounds.maxX - bounds.minX),
+    cy: bounds.minY + (object.labelY ?? 0.5) * (bounds.maxY - bounds.minY),
+    w: Math.max(...lines.map((line) => labelMetrics(line, fontSize).w)) + 12,
+    h: lines.length * lineHeight + 6,
+    fontSize,
+    lineHeight,
+    lines,
   };
 }

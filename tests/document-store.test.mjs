@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import { createTLStore, GeoShapeUtil, ArrowShapeUtil, toRichText } from 'tldraw';
 import {DocumentRepository,BoardConflict} from '../src/lib/whiteboard/document-store.ts';
 import {boardDocumentSchema,validateDocument} from '../src/lib/whiteboard/document-schema.ts';
+import {fullDocument} from './fixtures/full-document.mjs';
 
 function fixture() {
   const store=createTLStore({schema:boardDocumentSchema});
@@ -69,4 +70,26 @@ test('corrupt and invalid data is rejected without overwriting the saved file',(
   writeFileSync(path,'corrupt');
   assert.throws(()=>new DocumentRepository(path));
   assert.equal(readFileSync(path,'utf8'),'corrupt');
+}));
+
+test('bindings must connect shapes and image asset references must exist', () => {
+  const wrongTarget = structuredClone(fixture());
+  wrongTarget.store['binding:test'].toId = 'page:test';
+  assert.throws(() => validateDocument(wrongTarget));
+  const missingAsset = fullDocument();
+  delete missingAsset.store['asset:audit'];
+  assert.throws(() => validateDocument(missingAsset), /asset/i);
+});
+
+test('saved command sequences must be ordered, unique, and nonnegative', () => isolated(path => {
+  const repository = new DocumentRepository(path);
+  repository.enqueue({ kind: 'put', object });
+  const saved = repository.read();
+  saved.commands.push(saved.commands[0]);
+  writeFileSync(path, JSON.stringify(saved));
+  assert.throws(() => new DocumentRepository(path), /sequence/i);
+  saved.commands = [];
+  saved.revision = -1;
+  writeFileSync(path, JSON.stringify(saved));
+  assert.throws(() => new DocumentRepository(path), /saved board/i);
 }));

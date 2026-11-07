@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import AIResponse from "./ai-response";
+import { readChatEvents } from "@/lib/agent/chat-events";
 
 const EXAMPLES = [
     "Draw a login flowchart",
@@ -12,27 +13,29 @@ const EXAMPLES = [
 export default function Sidebar({
     open,
     onOpenChange,
-    onWorkingChange,
 }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
-    onWorkingChange: (working: boolean) => void;
 }) {
     const [prompt, setPrompt] = useState("");
     const [response, setResponse] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const requestRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
         if (open) textareaRef.current?.focus();
     }, [open]);
 
+    useEffect(() => () => requestRef.current?.abort(), []);
+
     async function send(nextPrompt: string) {
         const text = nextPrompt.trim();
-        if (loading || !text) return;
+        if (requestRef.current || !text) return;
+        const cancellation = new AbortController();
+        requestRef.current = cancellation;
         setLoading(true);
-        onWorkingChange(true);
         setError("");
         setResponse("");
         setPrompt("");
@@ -41,6 +44,7 @@ export default function Sidebar({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ prompt: text }),
+                signal: cancellation.signal,
             });
 
             if (!result.ok) {
@@ -49,25 +53,18 @@ export default function Sidebar({
             }
             if (!result.body) throw new Error("No response stream. Try again.");
 
-            const reader = result.body.pipeThrough(new TextDecoderStream()).getReader();
-            try {
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    setResponse((current) => current + value);
-                }
-            } catch {
-                throw new Error(
-                    "The response was interrupted. Check codex login status and try again.",
-                );
-            } finally {
-                reader.releaseLock();
-            }
+            await readChatEvents(result.body, (event) => {
+                if (event.type === "delta") setResponse((current) => current + event.text);
+                else if (event.type === "replace") setResponse(event.text);
+                else if (event.type === "reset") setResponse("");
+            });
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Could not connect. Try again.");
+            if (!cancellation.signal.aborted) {
+                setError(err instanceof Error ? err.message : "Could not connect. Try again.");
+            }
         } finally {
+            requestRef.current = null;
             setLoading(false);
-            onWorkingChange(false);
         }
     }
 
@@ -77,7 +74,7 @@ export default function Sidebar({
     }
 
     function onEnterKey(event: KeyboardEvent<HTMLTextAreaElement>) {
-        if (event.key === "Enter" && !event.shiftKey) {
+        if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             void send(prompt);
         }

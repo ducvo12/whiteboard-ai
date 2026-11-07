@@ -36,6 +36,7 @@ for (const rotation of [0, 30, 90, 180, -45]) {
     assert.equal(converted.object, object.object);
     for (const key of ['x', 'y', 'w', 'h', 'r', 'x2', 'y2']) if (key in object) close(converted[key], object[key]);
     close(Math.sin(converted.rotation * Math.PI / 180), Math.sin(rotation * Math.PI / 180));
+    close(Math.cos(converted.rotation * Math.PI / 180), Math.cos(rotation * Math.PI / 180));
     if (object.text) assert.equal(converted.text, object.text);
     if (object.points) object.points.forEach((point,i) => { close(converted.points[i].x,point.x); close(converted.points[i].y,point.y); });
 

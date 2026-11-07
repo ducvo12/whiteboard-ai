@@ -1,82 +1,58 @@
-import { getBoardRepository } from "./document-store";
-import { UpdateObjectSchemaType, CreateShapeSchemaType, DeleteObjectSchemaType, NoArgumentsSchemaType, StoredObjectSchemaType, TextboxSchemaType, StoredObjectSchema } from "./schemas";
+import { getBoardRepository } from "./document-store.ts";
+import { equalValues } from "./object-values.ts";
+import {
+  ObjectPatchSchemas, StoredObjectSchema,
+  type BoardObjectSchemaType, type UpdateObjectSchemaType, type CreateShapeSchemaType,
+  type DeleteObjectSchemaType, type TextboxSchemaType,
+} from "./schemas.ts";
 
-export function listObjects(input: NoArgumentsSchemaType) {
-    return getBoardRepository().view();
+export function listObjects() {
+  return getBoardRepository().view();
+}
+
+function createObject(input: BoardObjectSchemaType, id: string, message: string) {
+  const obj = { ...input, id };
+  getBoardRepository().enqueue({ kind: "put", object: obj });
+  return { message, obj };
 }
 
 export function createShape(input: CreateShapeSchemaType, id = crypto.randomUUID()) {
-    const obj: StoredObjectSchemaType = {
-        id,
-        ...input
-    }
-    getBoardRepository().enqueue({kind:"put",object:obj});
-
-    return {
-        message: "shape created",
-        obj: obj
-    };
+  return createObject(input, id, "shape created");
 }
 
 export function createTextbox(input: TextboxSchemaType, id = crypto.randomUUID()) {
-    const obj: StoredObjectSchemaType = {
-        id,
-        ...input
-    }
-    getBoardRepository().enqueue({kind:"put",object:obj});
-
-    return {
-        message: "textbox created",
-        obj: obj
-    };
+  return createObject(input, id, "textbox created");
 }
 
 export function deleteObject(input: DeleteObjectSchemaType) {
-    const objects = getBoardRepository().view();
-    const index = objects.findIndex((obj) => obj.id === input.id);
-
-    if (index === -1) return { success: false, message: `Object with id ${input.id} not found` };
-
-    getBoardRepository().enqueue({kind:"delete",id:input.id});
-
-    return { success: true, deleted_id: input };
+  if (!listObjects().some((object) => object.id === input.id)) {
+    return { success: false, message: `Object with id ${input.id} not found` };
+  }
+  getBoardRepository().enqueue({ kind: "delete", id: input.id });
+  return { success: true, deleted_id: input.id };
 }
 
 export function clearObjects() {
-    getBoardRepository().enqueue({kind:"clear"});
-    return { success: true };
+  getBoardRepository().enqueue({ kind: "clear" });
+  return { success: true };
 }
 
 export function updateObject(input: UpdateObjectSchemaType) {
-    const objects = getBoardRepository().view();
-    const index = objects.findIndex((obj) => obj.id === input.id);
+  const current = listObjects().find((object) => object.id === input.id);
+  if (!current) return { success: false, message: `Object with id ${input.id} not found` };
 
-    if (index === -1) return { success: false, message: `Object with id ${input.id} not found` };
+  const patch = ObjectPatchSchemas[current.object].safeParse(input.patch);
+  if (!patch.success) {
+    return { success: false, message: `Invalid ${current.object} update`, error: patch.error.issues };
+  }
+  const parsed = StoredObjectSchema.safeParse({ ...current, ...patch.data });
+  if (!parsed.success) {
+    return { success: false, message: "Invalid updated object", error: parsed.error.issues };
+  }
 
-    const current = objects[index];
-    const updatedObject = {
-        ...current,
-        ...input.patch,
-        rotation: input.patch.rotation ?? current.rotation ?? 0,
-    };
-
-    const parsed = StoredObjectSchema.safeParse(updatedObject)
-
-    if (parsed.success) {
-        const originalValues: Record<string, unknown> = {};
-
-        for (const key of Object.keys(input.patch)) {
-            originalValues[key] =
-                objects[index][key as keyof StoredObjectSchemaType];
-        }
-
-        getBoardRepository().enqueue({kind:"put",object:parsed.data});
-        return { success: true, old_values: originalValues, new_values: input.patch };
-    } else {
-        return { success: false, message: "Failed to parse updated object", error: parsed.error };
-    }
-}
-
-export function getCoordinates(input: NoArgumentsSchemaType) {
-    return "test"
+  const oldValues = Object.fromEntries(Object.keys(patch.data).map((key) => [key, current[key as keyof typeof current]]));
+  if (!equalValues(current, parsed.data)) {
+    getBoardRepository().enqueue({ kind: "put", object: parsed.data });
+  }
+  return { success: true, old_values: oldValues, new_values: patch.data };
 }

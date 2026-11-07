@@ -1,12 +1,10 @@
-// this file contains the functions to take a screenshot of the board
-
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Resvg } from "@resvg/resvg-js";
-import { objectBounds, unionBounds } from "./geometry";
-import { LABEL_BACKGROUND, LABEL_COLOR, labelPlacement } from "./label";
-import { StoredObjectSchemaType } from "./schemas";
+import { objectBounds, type Bounds } from "./geometry.ts";
+import { LABEL_BACKGROUND, LABEL_COLOR, labelLayout } from "./label.ts";
+import type { StoredObjectSchemaType } from "./schemas";
 
 const PAD = 48;
 
@@ -36,7 +34,14 @@ function shapeSvg(
     const topLeft = toScreen(obj.x, obj.y + obj.h);
     body = `<rect x="${topLeft.sx}" y="${topLeft.sy}" width="${obj.w * scale}" height="${obj.h * scale}" ${fill} ${stroke}/>`;
     if (obj.object === "textbox") {
-      body += `<text x="${topLeft.sx + 8}" y="${topLeft.sy + obj.fontSize * scale}" fill="${xml(obj.textColor)}" font-family="Helvetica, Arial, sans-serif" font-size="${obj.fontSize * scale}">${xml(obj.text)}</text>`;
+      const fontSize = obj.fontSize * scale;
+      const padding = Math.min(8, obj.fontSize * 0.35) * scale;
+      const lines = obj.text.split("\n").map((line, index) =>
+        `<tspan x="${topLeft.sx + padding}" y="${topLeft.sy + padding + fontSize + index * fontSize * 1.3}">${xml(line)}</tspan>`,
+      ).join("");
+      const clipId = `text-${crypto.randomUUID()}`;
+      body += `<defs><clipPath id="${clipId}"><rect x="${topLeft.sx}" y="${topLeft.sy}" width="${obj.w * scale}" height="${obj.h * scale}"/></clipPath></defs>
+        <text clip-path="url(#${clipId})" fill="${xml(obj.textColor)}" font-family="Helvetica, Arial, sans-serif" font-size="${fontSize}">${lines}</text>`;
     }
   } else if (obj.object === "polygon") {
     const points = obj.points.map((point) => {
@@ -71,18 +76,54 @@ function shapeSvg(
   const center = toScreen((bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2);
   const text = obj.label?.trim();
   if (text) {
-    const place = labelPlacement(obj, text);
+    const place = labelLayout(obj, text);
     const at = toScreen(place.cx, place.cy);
     const w = place.w * scale;
     const h = place.h * scale;
+    const lines = place.lines.map((line, index) => {
+      const y = at.sy + (index - (place.lines.length - 1) / 2) * place.lineHeight * scale;
+      return `<tspan x="${at.sx}" y="${y}">${xml(line)}</tspan>`;
+    }).join("");
     body += `<rect x="${at.sx - w / 2}" y="${at.sy - h / 2}" width="${w}" height="${h}" rx="3" fill="${xml(obj.labelBackground || LABEL_BACKGROUND)}" stroke="#e3e5dc"/>
-      <text x="${at.sx}" y="${at.sy}" text-anchor="middle" dominant-baseline="central" fill="${xml(obj.labelColor || LABEL_COLOR)}" font-family="Helvetica, Arial, sans-serif" font-size="${place.h * scale}">${xml(text)}</text>`;
+      <text text-anchor="middle" dominant-baseline="central" fill="${xml(obj.labelColor || LABEL_COLOR)}" font-family="Helvetica, Arial, sans-serif" font-size="${place.fontSize * scale}">${lines}</text>`;
   }
   return `<g transform="rotate(${-(obj.rotation ?? 0)} ${center.sx} ${center.sy})">${body}</g>`;
 }
 
-export function writeBoardScreenshot(objects: StoredObjectSchemaType[]) {
-  const bounds = unionBounds(objects) ?? { minX: 0, minY: 0, maxX: 400, maxY: 260 };
+function renderBounds(object: StoredObjectSchemaType): Bounds {
+  const geometry = objectBounds(object);
+  const stroke = object.strokeWidth / 2;
+  const label = object.label?.trim() ? labelLayout(object, object.label.trim()) : null;
+  const bounds = {
+    minX: Math.min(geometry.minX - stroke, label ? label.cx - label.w / 2 : Infinity),
+    minY: Math.min(geometry.minY - stroke, label ? label.cy - label.h / 2 : Infinity),
+    maxX: Math.max(geometry.maxX + stroke, label ? label.cx + label.w / 2 : -Infinity),
+    maxY: Math.max(geometry.maxY + stroke, label ? label.cy + label.h / 2 : -Infinity),
+  };
+  const cx = (geometry.minX + geometry.maxX) / 2;
+  const cy = (geometry.minY + geometry.maxY) / 2;
+  const angle = object.rotation * Math.PI / 180;
+  const corners = [
+    [bounds.minX, bounds.minY], [bounds.minX, bounds.maxY],
+    [bounds.maxX, bounds.minY], [bounds.maxX, bounds.maxY],
+  ].map(([x, y]) => ({
+    x: cx + (x - cx) * Math.cos(angle) - (y - cy) * Math.sin(angle),
+    y: cy + (x - cx) * Math.sin(angle) + (y - cy) * Math.cos(angle),
+  }));
+  return {
+    minX: Math.min(...corners.map((point) => point.x)),
+    minY: Math.min(...corners.map((point) => point.y)),
+    maxX: Math.max(...corners.map((point) => point.x)),
+    maxY: Math.max(...corners.map((point) => point.y)),
+  };
+}
+
+/** Render the supported-object projection, rather than a native editor capture. */
+export function renderBoardScreenshot(objects: StoredObjectSchemaType[]) {
+  const bounds = objects.map(renderBounds).reduce<Bounds | null>((all, next) => all ? {
+    minX: Math.min(all.minX, next.minX), minY: Math.min(all.minY, next.minY),
+    maxX: Math.max(all.maxX, next.maxX), maxY: Math.max(all.maxY, next.maxY),
+  } : next, null) ?? { minX: 0, minY: 0, maxX: 400, maxY: 260 };
   const worldW = Math.max(bounds.maxX - bounds.minX, 1);
   const worldH = Math.max(bounds.maxY - bounds.minY, 1);
   const scale = Math.min(1100 / worldW, 760 / worldH);
@@ -103,6 +144,11 @@ export function writeBoardScreenshot(objects: StoredObjectSchemaType[]) {
     font: { loadSystemFonts: true, defaultFontFamily: "Helvetica" },
     background: "#f4f3ef",
   }).render().asPng();
+  return { png, width, height };
+}
+
+export function writeBoardScreenshot(objects: StoredObjectSchemaType[]) {
+  const { png, width, height } = renderBoardScreenshot(objects);
   const imagePath = join(tmpdir(), `whiteboard-${crypto.randomUUID()}.png`);
   writeFileSync(imagePath, png);
   return { imagePath, width, height };

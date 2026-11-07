@@ -10,8 +10,8 @@ for (const mode of ['light','dark']) for (const fill of ['none','semi','solid','
     const polygon = objectToShape({id:'test',object:'polygon',x:0,y:0,rotation:0,strokeColor:'#4465e9',fillColor:'#4465e9',strokeWidth:2,
       points:[{x:0,y:0},{x:100,y:0},{x:20,y:80}]});
     polygon.props.fill = fill;
-    const shape = polygonNativeShape(polygon,editor);
     const polygonUtil = new PolygonGeoStyleUtil(editor);
+    const shape = polygonNativeShape(polygon,polygonUtil);
     const nativeUtil = new GeoShapeUtil(editor);
     const native = {...shape,props:{...shape.props,geo:'rectangle'}};
     assert.deepEqual(getDisplayValues(polygonUtil,shape),getDisplayValues(nativeUtil,native));

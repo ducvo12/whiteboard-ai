@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { existsSync, mkdtempSync, mkdirSync, symlinkSync, rmSync } from "node:fs";
-import { CODEX_CONFIG_ARGS, CODEX_POLICY_VERSION } from "./policy";
+import { CODEX_CONFIG_ARGS, CODEX_POLICY_VERSION } from "./policy.ts";
 import { join } from "node:path";
 
 type TurnResult = { status: string; error?: { message: string } | null };
@@ -33,8 +33,10 @@ class CodexServer {
   private turns = new Map<string, ActiveTurn>();
   readonly ready: Promise<unknown>;
   alive = true;
+  readonly binary: string;
 
-  constructor(readonly binary: string) {
+  constructor(binary: string) {
+    this.binary = binary;
     // Load only the existing login, not personal config, skills, plugins, or history.
     const authHome = process.env.CODEX_HOME || join(homedir(), ".codex");
     this.isolatedHome = mkdtempSync(join(tmpdir(), "whiteboard-codex-"));
@@ -64,6 +66,9 @@ class CodexServer {
     this.child.on("error", (error) => this.stop(error));
     this.child.on("exit", () => {
       this.stop(new Error("Codex server exited."));
+    });
+    // close also fires when spawning fails before an exit event is possible.
+    this.child.on("close", () => {
       rmSync(this.isolatedHome, { recursive: true, force: true });
     });
     this.child.stdin.on("error", (error) => this.stop(error));
@@ -175,7 +180,7 @@ class CodexServer {
       });
     } finally {
       // Completed ephemeral threads are unloaded after the no-subscriber grace period.
-      if (threadId) await this.request("thread/unsubscribe", { threadId }).catch(() => { });
+      if (threadId && this.alive) await this.request("thread/unsubscribe", { threadId }).catch(() => { });
       await rm(directory, { recursive: true, force: true });
     }
   }
@@ -190,10 +195,10 @@ const BUNDLED_CODEX = [
 
 function codexBinary(): string {
   const configured = process.env.CODEX_BIN;
-  if (configured && existsSync(configured)) return configured;
+  if (configured) return configured;
   const bundled = BUNDLED_CODEX.find((path) => existsSync(path));
   if (bundled) return bundled;
-  return configured || "codex";
+  return "codex";
 }
 
 function getCodex(): CodexServer {
@@ -208,7 +213,6 @@ function getCodex(): CodexServer {
 export async function askCodex(request: CodexRequest): Promise<string> {
   const codex = getCodex();
 
-  // call codex
   try {
     return await codex.answer(request);
   } catch (error) {
